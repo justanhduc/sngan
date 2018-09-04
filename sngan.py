@@ -190,6 +190,7 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5), n_d
             mon.plot('time elapsed', (time.time() - start)/60.)
             mon.flush()
         mon.tick()
+    mon.flush()
     print('Training finished!')
 
 
