@@ -1,10 +1,25 @@
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+import argparse
 import numpy as np
-import theano
-from theano import tensor as T
 import time
 from collections import OrderedDict
+
+parser = argparse.ArgumentParser()
+parser.add_argument('path', type=str, help='path to CIFAR dataset')
+parser.add_argument('--bs', type=int, default=64)
+parser.add_argument('--n_iters', type=int, default=100000)
+parser.add_argument('--gpu', '-g', type=int, default=0, help='GPU ID (negative value indicates CPU)')
+parser.add_argument('--n_dis', type=int, default=5, help='number of discriminator update per generator update')
+parser.add_argument('--valid_freq', type=int, default=500, help='Interval of displaying log to console')
+parser.add_argument('--adam_alpha', type=float, default=.0002, help='alpha in Adam optimizer')
+parser.add_argument('--adam_beta1', type=float, default=0., help='beta1 in Adam optimizer')
+parser.add_argument('--adam_beta2', type=float, default=.9, help='beta2 in Adam optimizer')
+parser.add_argument('--use_visdom', type=int, default=False, help='whether to use Visdom for monitoring')
+args = parser.parse_args()
+
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
+import theano
+from theano import tensor as T
 
 import neuralnet as nn
 from neuralnet import read_data
@@ -112,7 +127,7 @@ def spectral_normalize(updates):
 
 class DataManager(nn.DataManager):
     def __init__(self, placeholders, n_iters, batchsize, shuffle):
-        super(DataManager, self).__init__(None, placeholders, path='D:\DB\cifar10', batch_size=batchsize,
+        super(DataManager, self).__init__(None, placeholders, path=args.path, batch_size=batchsize,
                                           n_epochs=n_iters, shuffle=shuffle)
         self.load_data()
         self.n_epochs = int(self.batch_size * n_iters / self.data_size)
@@ -130,7 +145,7 @@ class DataManager(nn.DataManager):
         return input / 2. + .5
 
 
-def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5), n_dis=5):
+def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5)):
     gen = DCGANGenerator((None, z_dim))
     dis = SNDCGANDiscriminator(gen.output_shape)
 
@@ -149,8 +164,8 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5), n_d
     dis_loss = dis_loss_real + dis_loss_fake
     gen_loss = T.mean(T.nnet.softplus(-y_fake))
 
-    updates_gen = nn.adam(gen_loss, gen.trainable, 2e-4, 0., .9)
-    updates_dis = nn.adam(dis_loss, dis.trainable, 2e-4, 0., .9)
+    updates_gen = nn.adam(gen_loss, gen.trainable, args.adam_alpha, args.adam_beta1, args.adam_beta2)
+    updates_dis = nn.adam(dis_loss, dis.trainable, args.adam_alpha, args.adam_beta1, args.adam_beta2)
     updates_dis_norm = spectral_normalize(updates_dis)
 
     train_gen = nn.function([], gen_loss, updates=updates_gen)
@@ -163,7 +178,7 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5), n_d
     generate = nn.function([], gen_imgs, name='generate images')
 
     dm = DataManager(X_, n_iters, bs, True)
-    mon = nn.monitor.Monitor(model_name='LSGAN', use_visdom=True)
+    mon = nn.monitor.Monitor(model_name='LSGAN', use_visdom=args.use_visdom)
     epoch = 0
     print('Training...')
     batches = dm.get_batches(epoch, dm.n_epochs, infinite=True)
@@ -177,14 +192,14 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5), n_d
 
         #update discriminator
         training_disc_cost = []
-        for i in range(n_dis):
+        for i in range(args.n_dis):
             batches.__next__()
             training_disc_cost.append(train_dis())
             if np.isnan(training_disc_cost[-1]) or np.isinf(training_disc_cost[-1]):
                 raise ValueError('Training failed due to NaN cost')
         mon.plot('training disc cost', np.mean(training_disc_cost))
 
-        if iteration % 500 == 0:
+        if iteration % args.valid_freq == 0:
             gen_images = generate()
             mon.imwrite('generated image', dm.unnormalize(gen_images))
             mon.plot('time elapsed', (time.time() - start)/60.)
@@ -195,4 +210,4 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5), n_d
 
 
 if __name__ == '__main__':
-    train_sngan()
+    train_sngan(bs=args.bs, n_iters=args.n_iters)
