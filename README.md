@@ -17,10 +17,6 @@ python sngan.py path-to-CIFAR-dataset (--bs 64) (--n_ters 100000) (--gpu 0) (--n
 
 ## Samples
 
-The following samples are obtained after 20k iters
-
-![samples @20k](https://github.com/justanhduc/sngan/blob/master/samples/samples@20k.jpg)
-
 These samples are produced at the end of training
 
 ![samples @100k](https://github.com/justanhduc/sngan/blob/master/samples/samples@100k.jpg)
