@@ -168,8 +168,8 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5)):
     updates_dis = nn.adam(dis_loss, dis.trainable, args.adam_alpha, args.adam_beta1, args.adam_beta2)
     updates_dis_norm = spectral_normalize(updates_dis)
 
-    train_gen = nn.function([], gen_loss, updates=updates_gen)
-    train_dis = nn.function([], dis_loss, updates=updates_dis_norm, givens={X: X_})
+    train_gen = nn.function([], gen_loss, updates=updates_gen, name='train generator')
+    train_dis = nn.function([], dis_loss, updates=updates_dis_norm, givens={X: X_}, name='train discriminator')
 
     # testing
     nn.set_training_status(False)
