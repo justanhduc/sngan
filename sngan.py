@@ -27,6 +27,40 @@ from neuralnet import read_data
 srng = theano.sandbox.rng_mrg.MRG_RandomStreams(np.random.randint(1, int(time.time())))
 
 
+class SpecNormConv2dLayer(nn.ConvolutionalLayer):
+    def __init__(self, input_shape, num_filters, filter_size, init=nn.HeNormal(gain=1.), no_bias=True, border_mode='half',
+                 stride=(1, 1), dilation=(1, 1), layer_name='conv', activation='relu', **kwargs):
+        super(SpecNormConv2dLayer, self).__init__(input_shape, num_filters, filter_size, init, no_bias, border_mode,
+                                                  stride, dilation, layer_name, activation, **kwargs)
+        self.descriptions = ''.join(('{} Spectral Norm Conv Layer: '.format(self.layer_name), 'border mode: {} '.format(border_mode),
+                                     'subsampling: {} dilation {} '.format(stride, dilation), 'input shape: {} x '.format(input_shape),
+                                     'filter shape: {} '.format(self.filter_shape), '-> output shape {} '.format(self.output_shape),
+                                     'activation: {} '.format(activation)))
+        self.u = theano.shared(np.random.normal(size=(1, num_filters)).astype('float32'), layer_name + '/u')
+        self.params.append(self.u)
+
+    def get_output(self, input):
+        self.W, _u = nn.utils.spectral_normalize(self.W, self.u)
+        self.u.default_update = _u
+        return super(SpecNormConv2dLayer, self).get_output(input)
+
+
+class SpecNormFCLayer(nn.FullyConnectedLayer):
+    def __init__(self, input_shape, num_nodes, init=nn.HeNormal(gain=1.), no_bias=False, layer_name='fc',
+                 activation='relu', keep_dims=False, **kwargs):
+        super(SpecNormFCLayer, self).__init__(input_shape, num_nodes, init, no_bias, layer_name, activation, keep_dims,
+                                              **kwargs)
+        self.u = theano.shared(np.random.normal(size=(1, self.input_shape[1])).astype('float32'), layer_name + '/u')
+        self.descriptions = '{} Spec Norm FC: in_shape = {} weight shape = {} -> {} activation: {}'\
+            .format(self.layer_name, self.input_shape, (self.input_shape[1], num_nodes), self.output_shape, activation)
+        self.params.append(self.u)
+
+    def get_output(self, input):
+        self.W, _u = nn.utils.spectral_normalize(self.W, self.u)
+        self.u.default_update = _u
+        return super(SpecNormFCLayer, self).get_output(input)
+
+
 class DCGANGenerator(nn.Sequential):
     def __init__(self, input_shape, bottom_width=4, ch=512, wscale=0.02, hidden_activation='relu',
                  output_activation='tanh', layer_name='DCGANGen'):
@@ -90,41 +124,6 @@ class SNDCGANDiscriminator(nn.Sequential):
                                            layer_name=layer_name + '/output'))
 
 
-def _l2normalize(v, eps=1e-12):
-    return v / ((T.sum(v ** 2)) ** 0.5 + eps)
-
-
-def max_singular_value(W, u=None, lp=1):
-    """
-    Apply power iteration for the weight parameter
-    """
-    if W.ndim > 2:
-        W = W.flatten(2)
-
-    if u is None:
-        u = theano.shared(np.random.normal(size=(1, W.get_value().shape[0])).astype('float32'), 'u')
-    _u = u
-    for _ in range(lp):
-        _v = _l2normalize(T.dot(_u, W))
-        _u = _l2normalize(T.dot(_v, W.T))
-    sigma = T.sum(T.dot(T.dot(_u, W), _v.T))
-    return sigma, _u, _v
-
-
-def spectral_normalize(updates):
-    new_updates = OrderedDict()
-    for key in updates:
-        param = updates[key]
-        if param.ndim < 2 or any(a in key.name for a in ('grad', 'beta', 'gamma')):
-            new_updates[key] = param
-        else:
-            u = theano.shared(np.random.normal(size=(1, key.get_value().shape[0])).astype('float32'), key.name + '/u')
-            sigma, _u, _ = max_singular_value(param, u)
-            new_updates[key] = param / (sigma + 1e-12)
-            new_updates[u] = _u
-    return new_updates
-
-
 class DataManager(nn.DataManager):
     def __init__(self, placeholders, n_iters, batchsize, shuffle):
         super(DataManager, self).__init__(None, placeholders, path=args.path, batch_size=batchsize,
@@ -166,10 +165,9 @@ def train_sngan(z_dim=128, image_shape=(3, 32, 32), bs=64, n_iters=int(1e5)):
 
     updates_gen = nn.adam(gen_loss, gen.trainable, args.adam_alpha, args.adam_beta1, args.adam_beta2)
     updates_dis = nn.adam(dis_loss, dis.trainable, args.adam_alpha, args.adam_beta1, args.adam_beta2)
-    updates_dis_norm = spectral_normalize(updates_dis)
 
     train_gen = nn.function([], gen_loss, updates=updates_gen, name='train generator')
-    train_dis = nn.function([], dis_loss, updates=updates_dis_norm, givens={X: X_}, name='train discriminator')
+    train_dis = nn.function([], dis_loss, updates=updates_dis, givens={X: X_}, name='train discriminator')
 
     # testing
     nn.set_training_status(False)
